@@ -45,3 +45,4 @@ jobs:
             -t eurodoc/medlibre-ragflow:arm64-dev \
             -t eurodoc/medlibre-ragflow:v0.22.0-arm64-dev \
             . --push
+
