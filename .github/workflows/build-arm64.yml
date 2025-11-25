@@ -13,7 +13,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 1) Prepare Python environment and download deps (nltk_data, huggingface.co, jar, debs, etc.)
+      # 1) Prepare Python env and download deps so COPY in Dockerfile.deps works
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -22,7 +22,6 @@ jobs:
       - name: Install Python deps for download_deps.py
         run: |
           python -m pip install --upgrade pip
-          # Use requirements if it exists, otherwise install minimal deps
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
@@ -32,16 +31,18 @@ jobs:
       - name: Run download_deps.py
         run: |
           python download_deps.py
-          echo "After download_deps.py:"
+          echo "After download_deps.py, listing files:"
           ls -R
 
       - name: Set up QEMU (ARM64)
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
-
-      - name: Set up Docker Buildx
+      
+      - name: Set up Docker Buildx (docker driver)
         uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -49,7 +50,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 2) Build ragflow_deps for ARM64 so Dockerfile can COPY from those files
+      # 2) Build ragflow_deps for ARM64 locally
       - name: Build ragflow_deps (ARM64)
         run: |
           docker buildx build \
@@ -58,7 +59,7 @@ jobs:
             -t infiniflow/ragflow_deps:latest \
             . --load
 
-      # 3) Build and push main Ragflow ARM64 image
+      # 3) Build and push main Ragflow ARM64 image using local deps image
       - name: Build & Push Ragflow ARM64 image
         run: |
           docker buildx build \
