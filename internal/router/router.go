@@ -38,7 +38,10 @@ type Router struct {
 	searchHandler        *handler.SearchHandler
 	fileHandler          *handler.FileHandler
 	memoryHandler        *handler.MemoryHandler
+	mcpHandler           *handler.MCPHandler
+	skillSearchHandler   *handler.SkillSearchHandler
 	providerHandler      *handler.ProviderHandler
+	agentHandler         *handler.AgentHandler
 }
 
 // NewRouter create router
@@ -58,7 +61,10 @@ func NewRouter(
 	searchHandler *handler.SearchHandler,
 	fileHandler *handler.FileHandler,
 	memoryHandler *handler.MemoryHandler,
+	mcpHandler *handler.MCPHandler,
+	skillSearchHandler *handler.SkillSearchHandler,
 	providerHandler *handler.ProviderHandler,
+	agentHandler *handler.AgentHandler,
 ) *Router {
 	return &Router{
 		authHandler:          authHandler,
@@ -76,7 +82,10 @@ func NewRouter(
 		searchHandler:        searchHandler,
 		fileHandler:          fileHandler,
 		memoryHandler:        memoryHandler,
+		mcpHandler:           mcpHandler,
+		skillSearchHandler:   skillSearchHandler,
 		providerHandler:      providerHandler,
+		agentHandler:         agentHandler,
 	}
 }
 
@@ -86,19 +95,28 @@ func (r *Router) Setup(engine *gin.Engine) {
 	engine.GET("/health", r.systemHandler.Health)
 
 	// System endpoints
-	engine.GET("/v1/system/ping", r.systemHandler.Ping)
-	engine.GET("/v1/system/config", r.systemHandler.GetConfig)
 	engine.GET("/v1/system/configs", r.systemHandler.GetConfigs)
-	engine.GET("/v1/system/version", r.systemHandler.GetVersion)
-	engine.POST("/v1/user/register", r.userHandler.Register)
-	// User login channels endpoint
-	engine.GET("/v1/user/login/channels", r.userHandler.GetLoginChannels)
-
-	// User login by email endpoint
-	engine.POST("/v1/user/login", r.userHandler.LoginByEmail)
+	//engine.POST("/v1/user/register", r.userHandler.Register)
 
 	// User logout endpoint
 	engine.GET("/v1/user/logout", r.userHandler.Logout)
+
+	apiNoAuth := engine.Group("/api/v1")
+	{
+		apiNoAuth.GET("/system/ping", r.systemHandler.Ping)
+		apiNoAuth.GET("/system/config", r.systemHandler.GetConfig)
+		apiNoAuth.GET("/system/version", r.systemHandler.GetVersion)
+		apiNoAuth.GET("/system/healthz", r.systemHandler.Healthz)
+
+		// User login channels endpoint
+		apiNoAuth.GET("/auth/login/channels", r.userHandler.GetLoginChannels)
+
+		// User login by email endpoint
+		apiNoAuth.POST("/auth/login", r.userHandler.LoginByEmail)
+
+		// Register
+		apiNoAuth.POST("/users", r.userHandler.Register)
+	}
 
 	// Protected routes
 	authorized := engine.Group("")
@@ -120,14 +138,31 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// API v1 route group
 		v1 := authorized.Group("/api/v1")
 		{
-			// User routes
-			//users := v1.Group("/users")
-			//{
-			//	users.POST("/register", r.userHandler.Register)
-			//	users.POST("/login", r.userHandler.Login)
-			//	users.GET("", r.userHandler.ListUsers)
-			//	users.GET("/:id", r.userHandler.GetUserByID)
-			//}
+			// Auth routes
+			auth := v1.Group("/auth")
+			{
+				// User logout endpoint
+				auth.POST("/logout", r.userHandler.Logout)
+			}
+
+			// Users routes
+			users := v1.Group("/users")
+			{
+				users.GET("/me", r.userHandler.Info)
+				// User settings endpoint
+				users.PATCH("/me", r.userHandler.Setting)
+				// User tenant info endpoint
+				users.GET("/me/models", r.tenantHandler.TenantInfo)
+				// User set tenant info endpoint
+				users.PATCH("/me/models", r.userHandler.SetTenantInfo)
+			}
+
+			tenants := v1.Group("/tenants")
+			{
+				tenants.GET("", r.tenantHandler.TenantList)
+			}
+
+			v1.GET("/tenant/list", r.tenantHandler.TenantList)
 
 			// Document routes
 			documents := v1.Group("/documents")
@@ -139,12 +174,55 @@ func (r *Router) Setup(engine *gin.Engine) {
 				documents.DELETE("/:id", r.documentHandler.DeleteDocument)
 			}
 
-			// RESTful dataset routes
+			// Chat routes
+			chats := v1.Group("/chats")
+			{
+				chats.GET("", r.chatHandler.ListChats)
+				chats.GET("/:chat_id", r.chatHandler.GetChat)
+				chats.GET("/:chat_id/sessions", r.chatSessionHandler.ListChatSessions)
+			}
+
+			// Dataset routes
 			datasets := v1.Group("/datasets")
 			{
 				datasets.GET("", r.datasetsHandler.ListDatasets)
+				datasets.GET("/:dataset_id", r.datasetsHandler.GetDataset)
+				datasets.GET("/:dataset_id/graph", r.datasetsHandler.GetKnowledgeGraph)
+				datasets.DELETE("/:dataset_id/tags", r.datasetsHandler.RemoveTags)
+				datasets.DELETE("/:dataset_id/graph", r.datasetsHandler.DeleteKnowledgeGraph)
 				datasets.POST("", r.datasetsHandler.CreateDataset)
 				datasets.DELETE("", r.datasetsHandler.DeleteDatasets)
+				datasets.POST("/search", r.chunkHandler.RetrievalTest)
+				datasets.GET("/metadata/flattened", r.datasetsHandler.ListMetadataFlattened)
+
+				// Dataset documents
+				datasets.GET("/:dataset_id/documents", r.documentHandler.ListDocuments)
+
+				// Dataset document chunk
+				datasets.GET("/:dataset_id/documents/:document_id/chunks/:chunk_id", r.chunkHandler.Get)
+				datasets.POST("/:dataset_id/documents/parse", r.documentHandler.ParseDocuments)
+				datasets.DELETE("/:dataset_id/documents/:document_id/chunks", r.chunkHandler.RemoveChunks)
+			}
+
+			// Search routes
+			searches := v1.Group("/searches")
+			{
+				searches.GET("", r.searchHandler.ListSearches)
+				searches.POST("", r.searchHandler.CreateSearch)
+				searches.GET("/:search_id", r.searchHandler.GetSearch)
+				searches.PUT("/:search_id", r.searchHandler.UpdateSearch)
+				searches.DELETE("/:search_id", r.searchHandler.DeleteSearch)
+			}
+
+			file := v1.Group("/files")
+			{
+				file.POST("", r.fileHandler.UploadFile)
+				file.GET("", r.fileHandler.ListFiles)
+				file.DELETE("", r.fileHandler.DeleteFiles)
+				file.POST("/move", r.fileHandler.MoveFiles)
+				file.GET("/:id/ancestors", r.fileHandler.GetFileAncestors)
+				file.GET("/:id/parent", r.fileHandler.GetParentFolder)
+				file.GET("/:id", r.fileHandler.Download)
 			}
 
 			// Author routes
@@ -175,29 +253,31 @@ func (r *Router) Setup(engine *gin.Engine) {
 			// 	message.GET("/:memory_id/:message_id/content", r.memoryHandler.GetMessageContent)
 			// }
 
-			chats := v1.Group("/chats")
+			mcp := v1.Group("/mcp")
 			{
-				chats.GET("", r.chatHandler.ListChats)
-				chats.GET("/:chat_id", r.chatHandler.GetChat)
+				mcp.POST("/servers", r.mcpHandler.CreateMCPServer)
 			}
 
-			searches := v1.Group("/searches")
+			// Skill search routes
+			skills := v1.Group("/skills")
 			{
-				searches.GET("", r.searchHandler.ListSearches)
-				searches.POST("", r.searchHandler.CreateSearch)
-				searches.GET("/:search_id", r.searchHandler.GetSearch)
-				searches.PUT("/:search_id", r.searchHandler.UpdateSearch)
-				searches.DELETE("/:search_id", r.searchHandler.DeleteSearch)
-			}
+				// Skill Space management
+				skills.GET("/spaces", r.skillSearchHandler.ListSpaces)
+				skills.POST("/spaces", r.skillSearchHandler.CreateSpace)
+				skills.GET("/spaces/:space_id", r.skillSearchHandler.GetSpace)
+				skills.PUT("/spaces/:space_id", r.skillSearchHandler.UpdateSpace)
+				skills.DELETE("/spaces/:space_id", r.skillSearchHandler.DeleteSpace)
+				skills.GET("/space/by-folder", r.skillSearchHandler.GetSpaceByFolder)
 
-			file := v1.Group("/files")
-			{
-				file.POST("", r.fileHandler.UploadFile)
-				file.GET("", r.fileHandler.ListFiles)
-				file.DELETE("", r.fileHandler.DeleteFiles)
-				file.POST("/move", r.fileHandler.MoveFiles)
-				file.GET("/:id/ancestors", r.fileHandler.GetFileAncestors)
-				file.GET("/:id", r.fileHandler.Download)
+				// Skill search config
+				skills.GET("/config", r.skillSearchHandler.GetConfig)
+				skills.POST("/config", r.skillSearchHandler.UpdateConfig)
+
+				// Skill search and indexing
+				skills.POST("/search", r.skillSearchHandler.Search)
+				skills.POST("/index", r.skillSearchHandler.IndexSkills)
+				skills.DELETE("/index", r.skillSearchHandler.DeleteSkillIndex)
+				skills.POST("/reindex", r.skillSearchHandler.Reindex)
 			}
 
 			// provider pool route group
@@ -212,11 +292,23 @@ func (r *Router) Setup(engine *gin.Engine) {
 				provider.POST("/:provider_name/instances", r.providerHandler.CreateProviderInstance)
 				provider.GET("/:provider_name/instances", r.providerHandler.ListProviderInstances)
 				provider.GET("/:provider_name/instances/:instance_name", r.providerHandler.ShowProviderInstance)
+				provider.GET("/:provider_name/instances/:instance_name/balance", r.providerHandler.ShowInstanceBalance)
+				provider.GET("/:provider_name/instances/:instance_name/connection", r.providerHandler.CheckProviderConnection)
+				provider.GET("/:provider_name/instances/:instance_name/tasks", r.providerHandler.ListTasks)
+				provider.GET("/:provider_name/instances/:instance_name/tasks/:task_id", r.providerHandler.ShowTask)
 				provider.PUT("/:provider_name/instances/:instance_name", r.providerHandler.AlterProviderInstance)
 				provider.DELETE("/:provider_name/instances", r.providerHandler.DropProviderInstance)
 				provider.GET("/:provider_name/instances/:instance_name/models", r.providerHandler.ListInstanceModels)
-				provider.PATCH("/:provider_name/instances/:instance_name/models/:model_name", r.providerHandler.EnableOrDisableModel)
-				provider.POST("/:provider_name/instances/:instance_name/models/:model_name", r.providerHandler.ChatToModel)
+				provider.PATCH("/:provider_name/instances/:instance_name/models/*model_name", r.providerHandler.EnableOrDisableModel)
+				provider.POST("/:provider_name/instances/:instance_name/models", r.providerHandler.AddCustomModel)
+				provider.DELETE("/:provider_name/instances/:instance_name/models", r.providerHandler.DropInstanceModels)
+				v1.POST("/chat/completions", r.providerHandler.ChatToModel)
+				v1.POST("/embeddings", r.providerHandler.EmbedText)
+				v1.POST("/rerank", r.providerHandler.RerankDocument)
+				v1.POST("/audio/transcriptions", r.providerHandler.TranscribeAudio)
+				v1.POST("/audio/speech", r.providerHandler.AudioSpeech)
+				v1.POST("/file/ocr", r.providerHandler.OCRFile)
+				v1.POST("/file/parse", r.providerHandler.ParseFile)
 			}
 
 			model := v1.Group("/models")
@@ -225,9 +317,25 @@ func (r *Router) Setup(engine *gin.Engine) {
 				model.PATCH("/", r.tenantHandler.SetModels)
 			}
 
+			// Agent routes
+			agents := v1.Group("/agents")
+			{
+				agents.GET("", r.agentHandler.ListAgents)
+			}
+
+			connector := v1.Group("/connectors")
+			{
+				connector.GET("/", r.connectorHandler.ListConnectors)
+				connector.POST("/", r.connectorHandler.CreateConnector)
+				connector.GET("/:connector_id", r.connectorHandler.GetConnector)
+				connector.GET("/:connector_id/logs", r.connectorHandler.ListLogs)
+				connector.DELETE("/:connector_id", r.connectorHandler.DeleteConnector)
+				connector.POST("/:connector_id/rebuild", r.connectorHandler.RebuildConnector)
+				connector.POST("/:connector_id/test", r.connectorHandler.TestConnector)
+			}
+
 			system := v1.Group("/system")
 			{
-				system.GET("/version", r.systemHandler.GetVersion)
 				system.GET("/configs", r.systemHandler.GetConfigs)
 				log := system.Group("/log")
 				{
@@ -250,7 +358,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 		}
 
 		// Knowledge base routes
-		kb := authorized.Group("/v1/kb")
+		kb := v1.Group("/kb")
 		{
 			kb.POST("/update", r.knowledgebaseHandler.UpdateKB)
 			kb.POST("/update_metadata_setting", r.knowledgebaseHandler.UpdateMetadataSetting)
@@ -258,15 +366,11 @@ func (r *Router) Setup(engine *gin.Engine) {
 			kb.GET("/tags", r.knowledgebaseHandler.ListTagsFromKbs)
 			kb.GET("/get_meta", r.knowledgebaseHandler.GetMeta)
 			kb.GET("/basic_info", r.knowledgebaseHandler.GetBasicInfo)
-			kb.POST("/doc_engine_table", r.knowledgebaseHandler.CreateDatasetInDocEngine)   // Internal API only for GO
-			kb.DELETE("/doc_engine_table", r.knowledgebaseHandler.DeleteDatasetInDocEngine) // Internal API only for GO
-			kb.POST("/insert_from_file", r.knowledgebaseHandler.InsertDatasetFromFile)      // Internal API only for GO
 
 			// KB ID specific routes
 			kbByID := kb.Group("/:kb_id")
 			{
 				kbByID.GET("/tags", r.knowledgebaseHandler.ListTags)
-				kbByID.POST("/rm_tags", r.knowledgebaseHandler.RemoveTags)
 				kbByID.POST("/rename_tag", r.knowledgebaseHandler.RenameTag)
 				kbByID.GET("/knowledge_graph", r.knowledgebaseHandler.KnowledgeGraph)
 				kbByID.DELETE("/knowledge_graph", r.knowledgebaseHandler.DeleteKnowledgeGraph)
@@ -274,29 +378,30 @@ func (r *Router) Setup(engine *gin.Engine) {
 		}
 
 		// Tenant routes (per-tenant resources)
-		tenant := authorized.Group("/v1/tenant")
+		tenant := v1.Group("/tenant")
 		{
-			tenant.POST("/doc_engine_metadata_table", r.tenantHandler.CreateMetadataInDocEngine)   // Internal API only for GO
-			tenant.DELETE("/doc_engine_metadata_table", r.tenantHandler.DeleteMetadataInDocEngine) // Internal API only for GO
-			tenant.POST("/insert_metadata_from_file", r.tenantHandler.InsertMetadataFromFile)      // Internal API only for GO
+			tenant.POST("/chunk_store", r.tenantHandler.CreateChunkStore)                     // Internal API only for GO
+			tenant.DELETE("/chunk_store", r.tenantHandler.DeleteChunkStore)                   // Internal API only for GO
+			tenant.POST("/metadata_store", r.tenantHandler.CreateMetadataStore)               // Internal API only for GO
+			tenant.DELETE("/metadata_store", r.tenantHandler.DeleteMetadataStore)             // Internal API only for GO
+			tenant.POST("/insert_chunks_from_file", r.tenantHandler.InsertChunksFromFile)     // Internal API only for GO
+			tenant.POST("/insert_metadata_from_file", r.tenantHandler.InsertMetadataFromFile) // Internal API only for GO
 		}
 
 		// Document routes
-		doc := authorized.Group("/v1/document")
+		doc := v1.Group("/document")
 		{
 			doc.POST("/list", r.documentHandler.ListDocuments)
 			doc.POST("/metadata/summary", r.documentHandler.MetadataSummary)
 			doc.POST("/set_meta", r.documentHandler.SetMeta)
+			doc.POST("/delete_meta", r.documentHandler.DeleteMeta) // Internal API only for GO
 		}
 
 		// Chunk routes
-		chunk := authorized.Group("/v1/chunk")
+		chunk := v1.Group("/chunk")
 		{
-			chunk.POST("/retrieval_test", r.chunkHandler.RetrievalTest)
-			chunk.GET("/get", r.chunkHandler.Get)
 			chunk.POST("/list", r.chunkHandler.List)
 			chunk.POST("/update", r.chunkHandler.UpdateChunk) // Internal API only for GO
-			chunk.POST("/rm", r.chunkHandler.Remove)
 		}
 
 		// LLM routes
@@ -329,6 +434,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 		connector := authorized.Group("/v1/connector")
 		{
 			connector.GET("/list", r.connectorHandler.ListConnectors)
+			connector.GET("/:connector_id", r.connectorHandler.GetConnector)
+			connector.POST("/:connector_id/rebuild", r.connectorHandler.RebuildConnector)
 		}
 
 		// File routes

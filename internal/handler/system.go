@@ -18,7 +18,7 @@ package handler
 
 import (
 	"net/http"
-	"ragflow/internal/logger"
+	"ragflow/internal/common"
 	"ragflow/internal/server"
 	"ragflow/internal/service"
 
@@ -53,6 +53,16 @@ func (h *SystemHandler) Health(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"status": "ok",
 	})
+}
+
+// Healthz reports dependency health in the Python-compatible format.
+func (h *SystemHandler) Healthz(c *gin.Context) {
+	result, allOK := h.systemService.Healthz(c.Request.Context())
+	statusCode := http.StatusOK
+	if !allOK {
+		statusCode = http.StatusInternalServerError
+	}
+	c.JSON(statusCode, result)
 }
 
 // GetConfig get system configuration
@@ -133,7 +143,7 @@ func (h *SystemHandler) GetVersion(c *gin.Context) {
 
 // GetLogLevel returns the current log level
 func (h *SystemHandler) GetLogLevel(c *gin.Context) {
-	level := logger.GetLevel()
+	level := common.GetLevel()
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "success",
@@ -157,7 +167,7 @@ func (h *SystemHandler) SetLogLevel(c *gin.Context) {
 		return
 	}
 
-	if err := logger.SetLevel(req.Level); err != nil {
+	if err := common.SetLevel(req.Level); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": err.Error(),

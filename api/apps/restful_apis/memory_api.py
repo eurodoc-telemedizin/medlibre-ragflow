@@ -17,13 +17,14 @@ import logging
 import os
 import time
 
-from quart import request
+from quart import request, g
 from common.constants import LLMType, RetCode
 from common.exceptions import ArgumentException, NotFoundException
 from api.apps import login_required, current_user
 from api.utils.api_utils import validate_request, get_request_json, get_error_argument_result, get_json_result
 from api.apps.services import memory_api_service
 from api.utils.tenant_utils import ensure_tenant_model_id_for_params
+from api.utils.pagination_utils import validate_rest_api_page_size
 
 
 @manager.route("/memories", methods=["POST"])  # noqa: F821
@@ -130,11 +131,11 @@ async def delete_memory(memory_id):
 @login_required
 async def list_memory():
     filter_params = {
-        k: request.args.get(k) for k in ["memory_type", "tenant_id", "storage_type"] if k in request.args
+        k: request.args.get(k) for k in ["memory_type", "tenant_id", "owner_ids", "storage_type"] if k in request.args
     }
     keywords = request.args.get("keywords")
     page = int(request.args.get("page", 1))
-    page_size = int(request.args.get("page_size", 50))
+    page_size = validate_rest_api_page_size(int(request.args.get("page_size", 50)))
     try:
         res = await memory_api_service.list_memory(filter_params, keywords, page, page_size)
         return get_json_result(message=True, data=res)
@@ -167,7 +168,7 @@ async def get_memory_messages(memory_id):
     keywords = args.get("keywords", "")
     keywords = keywords.strip()
     page = int(args.get("page", 1))
-    page_size = int(args.get("page_size", 50))
+    page_size = validate_rest_api_page_size(int(args.get("page_size", 50)))
     try:
         res = await memory_api_service.get_memory_messages(
             memory_id, agent_ids, keywords, page, page_size
@@ -188,8 +189,18 @@ async def add_message():
     req = await get_request_json()
     memory_ids = req["memory_id"]
 
+    # JWT / session users cannot spoof attribution; API-key callers may supply an external subject id.
+    try:
+        trust_client_subject = bool(getattr(g, "auth_via_api_token", False))
+    except RuntimeError:
+        trust_client_subject = False
+    if trust_client_subject:
+        effective_user_id = req.get("user_id", "")
+    else:
+        effective_user_id = current_user.id
+
     message_dict = {
-        "user_id": req.get("user_id"),
+        "user_id": effective_user_id,
         "agent_id": req["agent_id"],
         "session_id": req["session_id"],
         "user_input": req["user_input"],
