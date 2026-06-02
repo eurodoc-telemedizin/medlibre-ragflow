@@ -45,6 +45,13 @@ func (s fakeConnectorService) GetConnector(string, string) (*entity.Connector, c
 	return s.connector, common.CodeSuccess, nil
 }
 
+func (s fakeConnectorService) UpdateConnector(string, string, *service.UpdateConnectorRequest) (*entity.Connector, common.ErrorCode, error) {
+	if s.err != nil {
+		return nil, s.code, s.err
+	}
+	return s.connector, common.CodeSuccess, nil
+}
+
 func (s fakeConnectorService) ListLog(string, string, int, int) ([]*entity.ConnectorSyncLog, int64, common.ErrorCode, error) {
 	if s.err != nil {
 		return nil, 0, s.code, s.err
@@ -199,6 +206,7 @@ func TestConnectorHandlerListLogs(t *testing.T) {
 		wantMsg   string
 		wantTotal float64
 		wantLogID string
+		wantLogs  int
 	}{
 		{
 			name: "success",
@@ -225,6 +233,17 @@ func TestConnectorHandlerListLogs(t *testing.T) {
 			wantCode:  common.CodeSuccess,
 			wantTotal: 1,
 			wantLogID: "log-1",
+			wantLogs:  1,
+		},
+		{
+			name: "empty logs",
+			service: fakeConnectorService{
+				logs:  nil,
+				total: 0,
+			},
+			wantCode:  common.CodeSuccess,
+			wantTotal: 0,
+			wantLogs:  0,
 		},
 		{
 			name:     "unauthorized",
@@ -266,7 +285,20 @@ func TestConnectorHandlerListLogs(t *testing.T) {
 					t.Fatalf("total=%v body=%v", data["total"], body)
 				}
 				logs := data["logs"].([]interface{})
+				if len(logs) != tt.wantLogs {
+					t.Fatalf("logs=%v body=%v", logs, body)
+				}
 				if logs[0].(map[string]interface{})["id"] != tt.wantLogID {
+					t.Fatalf("logs=%v body=%v", logs, body)
+				}
+			}
+			if tt.wantLogID == "" && tt.wantMsg == "" {
+				data := body["data"].(map[string]interface{})
+				if data["total"] != tt.wantTotal {
+					t.Fatalf("total=%v body=%v", data["total"], body)
+				}
+				logs := data["logs"].([]interface{})
+				if len(logs) != tt.wantLogs {
 					t.Fatalf("logs=%v body=%v", logs, body)
 				}
 			}
