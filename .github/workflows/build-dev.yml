@@ -5,43 +5,64 @@ on:
   push:
     branches: [ "development" ]
 
-jobs:
-  build-ragflow:
-    runs-on: ubuntu-latest
+# Cancel an in-flight run if you push again to the same branch.
+concurrency:
+  group: build-dev-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          # Native arm64 -> no QEMU. Works in public repos for free and in private
+          # repos against your plan's minutes. If your repo is private without arm64
+          # minutes, swap this for a self-hosted runner: [self-hosted, linux, ARM64]
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # The main Dockerfile copies .git and runs `git describe --tags` to write
+          # VERSION; a shallow checkout would yield a bare SHA instead of a version.
+          fetch-depth: 0
 
-      # 1) Prepare Python env and download deps so COPY/mount works
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install Python deps for download_deps.py
+      - name: Download deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install huggingface_hub nltk tiktoken requests
-          fi
-
-      - name: Run download_deps.py
-        run: |
+          pip install huggingface_hub nltk
           python download_deps.py
-          ls -R
+          # Fail loudly here if the artifacts aren't in the context dir; otherwise
+          # the Dockerfile.deps COPY fails later with a confusing "not found".
+          ls -la cl100k_base.tiktoken libssl*.deb nltk_data huggingface.co
 
-      # 2) Enable cross-build
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      # The repo .dockerignore intentionally strips these artifacts (in normal use
+      # they come prebaked from infiniflow/ragflow_deps). buildx prefers
+      # "<dockerfile>.dockerignore" over ".dockerignore", so this file lets the deps
+      # build see its artifacts WITHOUT affecting the main `-f Dockerfile` build.
+      - name: Add per-Dockerfile ignore for the deps build
+        run: |
+          printf '%s\n' \
+            '.git/' '.github/' '.venv/' 'web/node_modules/' 'web/dist/' \
+            'docker/data/' 'logs/' '*.log' \
+            > Dockerfile.deps.dockerignore
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
+          # Native runner: the docker driver shares the daemon's local image store,
+          # so the deps image we --load is visible to the subsequent main build's
+          # `--mount=from=infiniflow/ragflow_deps:latest`.
           driver: docker
 
       - name: Log in to Docker Hub
@@ -50,42 +71,39 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ---------- AMD64 ----------
-      - name: Build ragflow_deps (AMD64) locally
+      # FROM scratch + COPY: just files, no execution -> fast and QEMU-free even for arm64.
+      # Tagged exactly infiniflow/ragflow_deps:latest so the main Dockerfile resolves it
+      # locally (docker driver checks the local store first; do NOT add --pull).
+      - name: Build ragflow_deps (local, ${{ matrix.arch }})
         run: |
           docker buildx build \
-            --platform linux/amd64 \
+            --platform linux/${{ matrix.arch }} \
             -f Dockerfile.deps \
             -t infiniflow/ragflow_deps:latest \
             . --load
 
-      - name: Build & Push Ragflow (AMD64)
+      # --load then `docker push` (not --push): the docker driver's registry exporter
+      # is unreliable on hosted runners; loading + pushing a single-arch image is not.
+      - name: Build & push Ragflow (${{ matrix.arch }})
         run: |
           docker buildx build \
-            --platform linux/amd64 \
+            --platform linux/${{ matrix.arch }} \
             -f Dockerfile \
-            -t eurodoc/medlibre-ragflow:amd64-dev \
-            --push .
-
-      # ---------- ARM64 ----------
-      - name: Build ragflow_deps (ARM64) locally
-        run: |
-          docker buildx build \
-            --platform linux/arm64 \
-            -f Dockerfile.deps \
-            -t infiniflow/ragflow_deps:latest \
+            -t eurodoc/medlibre-ragflow:${{ matrix.arch }}-dev \
             . --load
+          docker push eurodoc/medlibre-ragflow:${{ matrix.arch }}-dev
 
-      - name: Build & Push Ragflow (ARM64)
-        run: |
-          docker buildx build \
-            --platform linux/arm64 \
-            -f Dockerfile \
-            -t eurodoc/medlibre-ragflow:arm64-dev \
-            --push .
+  manifest:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ---------- MANIFEST (generic tag) ----------
-      - name: Create & Push multi-arch manifest eurodoc/medlibre-ragflow:dev
+      - name: Create & push multi-arch manifest
         run: |
           docker buildx imagetools create \
             -t eurodoc/medlibre-ragflow:dev \
@@ -93,5 +111,4 @@ jobs:
             eurodoc/medlibre-ragflow:arm64-dev
 
       - name: Inspect manifest
-        run: |
-          docker buildx imagetools inspect eurodoc/medlibre-ragflow:dev
+        run: docker buildx imagetools inspect eurodoc/medlibre-ragflow:dev
