@@ -256,7 +256,7 @@ class SyncLogsService(CommonService):
                 cls.model.update_date < expr
             )
 
-        query = query.distinct().order_by(cls.model.update_time.desc())
+        query = query.distinct().order_by(cls.model.update_date.desc())
         total = query.count()
         if page_number:
             query = query.paginate(page_number, items_per_page)
