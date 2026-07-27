@@ -62,12 +62,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"ragflow/internal/common"
+
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // selfManagedDefaultEndpoint is the canonical executor_manager
@@ -116,12 +118,12 @@ func newSelfManagedProviderFromEnv() *SelfManagedProvider {
 // env vars, mirroring the admin-panel settings JSON shape.
 func selfManagedConfigFromEnv() map[string]any {
 	return map[string]any{
-		"EXECUTOR_MANAGER_URL":         os.Getenv("SANDBOX_EXECUTOR_MANAGER_URL"),
-		"EXECUTOR_MANAGER_TIMEOUT":     os.Getenv("SANDBOX_EXECUTOR_MANAGER_TIMEOUT"),
-		"EXECUTOR_MANAGER_POOL_SIZE":   os.Getenv("SANDBOX_EXECUTOR_MANAGER_POOL_SIZE"),
-		"EXECUTOR_MANAGER_MAX_RETRIES": os.Getenv("SANDBOX_EXECUTOR_MANAGER_MAX_RETRIES"),
-		"BASE_PYTHON_IMAGE":            os.Getenv("SANDBOX_BASE_PYTHON_IMAGE"),
-		"BASE_NODEJS_IMAGE":            os.Getenv("SANDBOX_BASE_NODEJS_IMAGE"),
+		"EXECUTOR_MANAGER_URL":         common.GetEnv(common.EnvSandboxExecutorManagerURL),
+		"EXECUTOR_MANAGER_TIMEOUT":     common.GetEnv(common.EnvSandboxExecutorManagerTimeout),
+		"EXECUTOR_MANAGER_POOL_SIZE":   common.GetEnv(common.EnvSandboxExecutorManagerPoolSize),
+		"EXECUTOR_MANAGER_MAX_RETRIES": common.GetEnv(common.EnvSandboxExecutorManagerMaxRetries),
+		"BASE_PYTHON_IMAGE":            common.GetEnv(common.EnvSandboxBasePythonImage),
+		"BASE_NODEJS_IMAGE":            common.GetEnv(common.EnvSandboxBaseNodeJSImage),
 	}
 }
 
@@ -239,21 +241,10 @@ func (p *SelfManagedProvider) ExecuteCode(
 		timeout = int(p.timeout.Seconds())
 	}
 
-	// Wrap the code in the result-protocol driver so the user's
-	// main() return value comes back as a structured result.
-	argsJSON, err := argsToJSON(args)
-	if err != nil {
-		return nil, err
-	}
-	var wrapped string
-	if lang == "python" {
-		wrapped = BuildPythonWrapper(code, argsJSON)
-	} else {
-		wrapped = BuildJavaScriptWrapper(code, argsJSON)
-	}
-
 	payload := map[string]any{
-		"code_b64":  base64.StdEncoding.EncodeToString([]byte(wrapped)),
+		// executor_manager wraps the raw user code on the server side.
+		// Do not pre-wrap here or we risk double-execution semantics.
+		"code_b64":  base64.StdEncoding.EncodeToString([]byte(code)),
 		"language":  lang,
 		"arguments": args,
 	}
@@ -314,12 +305,11 @@ func (p *SelfManagedProvider) ExecuteCode(
 	// container exec), the Go side still gets the value.
 	stdout, structured := ExtractStructuredResult(raw.Stdout)
 
-	// Prefer the server-side result when present; fall back to
-	// the client-side extract.
-	if raw.Result != nil {
-		if v, ok := raw.Result["present"].(bool); ok && v {
-			structured = raw.Result
-		}
+	// Prefer the server-side result whenever it is present in the
+	// HTTP payload. executor_manager already parsed the canonical
+	// result marker; this is the most reliable source of truth.
+	if len(raw.Result) > 0 {
+		structured = raw.Result
 	}
 
 	metadata := map[string]any{
@@ -334,6 +324,12 @@ func (p *SelfManagedProvider) ExecuteCode(
 		"runtime_error_type":  raw.RuntimeErr,
 		"structured_result":   structured,
 	}
+	common.Debug("CodeExec self_managed",
+		zap.Any("http_result", raw.Result),
+		zap.Any("structured_result", structured),
+		zap.String("stdout", stdout),
+		zap.String("stderr", raw.Stderr),
+		zap.Int("exit_code", raw.ExitCode))
 
 	return &ExecutionResult{
 		Stdout:        stdout,
