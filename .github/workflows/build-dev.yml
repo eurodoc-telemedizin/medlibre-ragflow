@@ -25,24 +25,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.13"
 
+      # Upstream moved the deps subsystem into ragflow_deps/. The script writes its
+      # artifacts next to itself, and that directory is now the deps build context.
       - name: Download deps
+        working-directory: ragflow_deps
         run: |
           python -m pip install --upgrade pip
           pip install huggingface_hub nltk
           python download_deps.py
           # Fail loudly if artifacts aren't in the context dir.
           ls -la cl100k_base.tiktoken libssl*.deb nltk_data huggingface.co
-
-      # buildx prefers "<dockerfile>.dockerignore"; this lets the deps build see its
-      # artifacts (the repo .dockerignore strips them) without touching the main build.
-      - name: Add per-Dockerfile ignore for the deps build
-        run: |
-          printf '%s\n' \
-            '.git/' '.github/' '.venv/' 'web/node_modules/' 'web/dist/' \
-            'docker/data/' 'logs/' '*.log' \
-            > Dockerfile.deps.dockerignore
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -61,9 +55,9 @@ jobs:
         run: |
           docker buildx build \
             --platform linux/arm64 \
-            -f Dockerfile.deps \
+            -f ragflow_deps/Dockerfile \
             -t infiniflow/ragflow_deps:latest \
-            . --load
+            ragflow_deps --load
 
       - name: Build & push Ragflow (arm64)
         run: |
