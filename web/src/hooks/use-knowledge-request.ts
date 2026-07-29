@@ -30,6 +30,7 @@ import {
 import i18n from '@/locales/config';
 import kbService, {
   clearWiki,
+  deleteArtifactsStructure,
   deleteKnowledgeGraph,
   getArtifactsAlteration,
   getArtifactGraph,
@@ -95,6 +96,7 @@ export const enum KnowledgeApiAction {
   RemoveKnowledgeGraph = 'removeKnowledgeGraph',
   ClearWiki = 'clearWiki',
   FetchDatasetStructure = 'fetchDatasetStructure',
+  DeleteDatasetStructure = 'deleteDatasetStructure',
   FetchArtifactAlteration = 'fetchArtifactAlteration',
   RunArtifactIndex = 'runArtifactIndex',
 }
@@ -833,6 +835,31 @@ export function useFetchDatasetStructureGraph(kind: string, keywords?: string) {
   return { data, loading };
 }
 
+export const useDeleteDatasetStructure = () => {
+  const knowledgeBaseId = useKnowledgeBaseId();
+  const queryClient = useQueryClient();
+
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [KnowledgeApiAction.DeleteDatasetStructure],
+    mutationFn: async (kind: string) => {
+      const { data } = await deleteArtifactsStructure(knowledgeBaseId, kind);
+      if (data?.code === 0) {
+        message.success(i18n.t('message.deleted'));
+        queryClient.invalidateQueries({
+          queryKey: DatasetStructureKeys.all(knowledgeBaseId),
+        });
+      }
+      return data?.code;
+    },
+  });
+
+  return { data, loading, deleteDatasetStructure: mutateAsync };
+};
+
 export function useFetchKnowledgeMetadata(kbIds: string[] = []) {
   const { data, isFetching: loading } = useQuery<
     Record<string, Record<string, string[]>>
@@ -992,7 +1019,7 @@ export const useFetchKnowledgeList = (
   handleScroll: (e: React.UIEvent<HTMLDivElement>) => void;
 } => {
   const { data, fetchNextPage, hasNextPage, isFetching, isFetchingNextPage } =
-    useInfiniteQuery<{ items: IDataset[] }>({
+    useInfiniteQuery<{ items: IDataset[]; total: number }>({
       queryKey: KnowledgeListKeys.list(
         shouldFilterListWithoutDocument,
         keywords,
@@ -1007,10 +1034,15 @@ export const useFetchKnowledgeList = (
           page_size: pageSize,
           ...(keywords ? { ext: { keywords } } : {}),
         });
-        return { items: (data?.data ?? []) as IDataset[] };
+        return {
+          items: (data?.data ?? []) as IDataset[],
+          total: data?.total_datasets ?? 0,
+        };
       },
-      getNextPageParam: (lastPage, allPages) =>
-        lastPage.items.length >= pageSize ? allPages.length + 1 : undefined,
+      getNextPageParam: (lastPage, allPages) => {
+        const loaded = allPages.reduce((total, page) => total + page.items.length, 0);
+        return loaded < lastPage.total ? allPages.length + 1 : undefined;
+      },
     });
 
   const list = useMemo(() => {
