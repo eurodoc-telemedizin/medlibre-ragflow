@@ -51,21 +51,20 @@ func TestPPTXParser_ParseWithResult_CGO(t *testing.T) {
 }
 
 // TestPPTParser_ParseWithResult_CGO verifies that PPTParser
-// delegates correctly to PPTXParser{format:"ppt"} and produces
-// output with File["format"] = "ppt".
+// delegates correctly to PPTXParser{format:"ppt"} and, via the
+// bidirectional magic-byte fallback, correctly opens OOXML content
+// through the PPTX path. A .pptx payload uploaded as .ppt should
+// succeed and report File["format"] == "pptx" (real container).
 func TestPPTParser_ParseWithResult_CGO(t *testing.T) {
 	ctx := t.Context()
 	p := NewPPTParser()
-	// Use PPTX content — office_oxide may reject it with format="ppt"
-	// hint (expects OLE binary). When it does, skip gracefully; when
-	// it succeeds, verify the metadata contract.
 	data := buildPPTX(t, "Hello")
 	res := p.ParseWithResult(ctx, "test.ppt", data)
 	if res.Err != nil {
-		t.Skip("PPTParser with PPTX data (expected maybe to fail):", res.Err)
+		t.Fatalf("ParseWithResult: %v", res.Err)
 	}
-	if got := res.File["format"]; got != "ppt" {
-		t.Errorf("File[format] = %v, want %q", got, "ppt")
+	if got := res.File["format"]; got != "pptx" {
+		t.Errorf("File[format] = %v, want %q (OOXML fallback ppt->pptx)", got, "pptx")
 	}
 }
 
@@ -135,6 +134,7 @@ type tcadpPresentationParser interface {
 }
 
 func testPresentationTCADPIntegration(t *testing.T, p tcadpPresentationParser, wantFileType, filename string) {
+	withSSRFBypass(t)
 	t.Helper()
 	zipPayload := tcadpZipFixture(t)
 	var gotFileType string
@@ -189,6 +189,7 @@ func testPresentationTCADPIntegration(t *testing.T, p tcadpPresentationParser, w
 // from the TCADP download endpoint is surfaced as an explicit error rather
 // than parsed as a (malformed) ZIP artifact.
 func TestPPTXParser_TCADPDownloadHTTPError(t *testing.T) {
+	withSSRFBypass(t)
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

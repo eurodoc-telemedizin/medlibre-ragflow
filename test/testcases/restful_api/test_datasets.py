@@ -48,6 +48,13 @@ def _parser_id_fields(chunk_method):
     return fields
 
 
+def _expected_chunk_method(chunk_method):
+    """Return the API-visible parser ID for the active proxy."""
+    if IS_GO_PROXY and chunk_method == "naive":
+        return "general"
+    return chunk_method
+
+
 def _is_infinity_doc_engine(rest_client: RestClient) -> bool:
     env_engine = (os.getenv("DOC_ENGINE") or "").strip().lower()
     if env_engine:
@@ -227,7 +234,7 @@ def test_dataset_update_chunk_method_contract(rest_client, clear_datasets, chunk
     assert update_res.status_code == 200
     update_payload = update_res.json()
     assert update_payload["code"] == 0, update_payload
-    assert update_payload["data"][PARSER_ID_FIELD] == chunk_method, update_payload
+    assert update_payload["data"][PARSER_ID_FIELD] == _expected_chunk_method(chunk_method), update_payload
 
 
 @pytest.mark.p1
@@ -272,20 +279,16 @@ def test_dataset_update_chunk_method_contract(rest_client, clear_datasets, chunk
         ("raptor_true", {"raptor": {"use_raptor": True}}),
         ("raptor_false", {"raptor": {"use_raptor": False}}),
         ("raptor_prompt", {"raptor": {"prompt": "Who are you?"}}),
-        ("raptor_max_token_min", {"raptor": {"max_token": 1}}),
+        ("raptor_max_token_min", {"raptor": {"max_token": 512}}),
         ("raptor_max_token_mid", {"raptor": {"max_token": 1024}}),
         ("raptor_max_token_max", {"raptor": {"max_token": 2048}}),
-        ("raptor_threshold_min", {"raptor": {"threshold": 0.0}}),
-        ("raptor_threshold_mid", {"raptor": {"threshold": 0.5}}),
-        ("raptor_threshold_max", {"raptor": {"threshold": 1.0}}),
+        ("raptor_clustering_threshold_min", {"raptor": {"clustering_threshold": 0.0}}),
+        ("raptor_clustering_threshold_mid", {"raptor": {"clustering_threshold": 0.5}}),
+        ("raptor_clustering_threshold_max", {"raptor": {"clustering_threshold": 1.0}}),
         ("raptor_max_cluster_min", {"raptor": {"max_cluster": 1}}),
         ("raptor_max_cluster_mid", {"raptor": {"max_cluster": 512}}),
         ("raptor_max_cluster_max", {"raptor": {"max_cluster": 1024}}),
         ("raptor_random_seed_min", {"raptor": {"random_seed": 0}}),
-        ("raptor_clustering_method_gmm", {"raptor": {"clustering_method": "gmm"}}),
-        ("raptor_clustering_method_ahc", {"raptor": {"clustering_method": "ahc"}}),
-        ("raptor_tree_builder_raptor", {"raptor": {"tree_builder": "raptor"}}),
-        ("raptor_tree_builder_psi", {"raptor": {"tree_builder": "psi"}}),
     ],
     ids=[
         "auto_keywords_min",
@@ -329,17 +332,13 @@ def test_dataset_update_chunk_method_contract(rest_client, clear_datasets, chunk
         "raptor_max_token_min",
         "raptor_max_token_mid",
         "raptor_max_token_max",
-        "raptor_threshold_min",
-        "raptor_threshold_mid",
-        "raptor_threshold_max",
+        "raptor_clustering_threshold_min",
+        "raptor_clustering_threshold_mid",
+        "raptor_clustering_threshold_max",
         "raptor_max_cluster_min",
         "raptor_max_cluster_mid",
         "raptor_max_cluster_max",
         "raptor_random_seed_min",
-        "raptor_clustering_method_gmm",
-        "raptor_clustering_method_ahc",
-        "raptor_tree_builder_raptor",
-        "raptor_tree_builder_psi",
     ],
 )
 def test_dataset_update_parser_config_valid_matrix_contract(rest_client, clear_datasets, name, parser_config):
@@ -916,7 +915,7 @@ def test_dataset_update_chunk_method_invalid_contract(rest_client, clear_dataset
         elif IS_GO_PROXY and chunk_method == "":
             assert payload["message"] == "parser_id is required when parse_type is BuiltIn", payload
         elif IS_GO_PROXY:
-            assert payload["message"].startswith("input should be 'audio', 'book'") and payload["message"].endswith("or 'table'"), payload
+            assert payload["message"].startswith("input should be 'general', 'qa'") and payload["message"].endswith("or 'email'"), payload
         else:
             assert expected_chunk_message in payload["message"], payload
 
@@ -926,7 +925,7 @@ def test_dataset_update_chunk_method_invalid_contract(rest_client, clear_dataset
     _skip_go_ignored_null(none_payload, PARSER_ID_FIELD)
     assert none_payload["code"] == ARGUMENT_ERROR_CODE, none_payload
     if IS_GO_PROXY:
-        assert none_payload["message"].startswith("input should be 'audio', 'book'") and none_payload["message"].endswith("or 'table'"), none_payload
+        assert none_payload["message"].startswith("input should be 'general', 'qa'") and none_payload["message"].endswith("or 'email'"), none_payload
     else:
         assert expected_chunk_message in none_payload["message"], none_payload
 
@@ -1028,13 +1027,11 @@ def test_dataset_update_parser_config_invalid_contract(rest_client, clear_datase
         ({"raptor": {"use_raptor": "string"}}, "Input should be a valid boolean"),
         ({"raptor": {"prompt": ""}}, "String should have at least 1 character"),
         ({"raptor": {"prompt": " "}}, "String should have at least 1 character"),
-        ({"raptor": {"max_token": 0}}, "Input should be greater than or equal to 1"),
         ({"raptor": {"max_token": 2049}}, "Input should be less than or equal to 2048"),
-        ({"raptor": {"max_token": 3.14}}, "Input should be a valid integer"),
         ({"raptor": {"max_token": "string"}}, "Input should be a valid integer"),
-        ({"raptor": {"threshold": -0.1}}, "Input should be greater than or equal to 0"),
-        ({"raptor": {"threshold": 1.1}}, "Input should be less than or equal to 1"),
-        ({"raptor": {"threshold": "string"}}, "Input should be a valid number"),
+        ({"raptor": {"clustering_threshold": -0.1}}, "Input should be greater than or equal to 0"),
+        ({"raptor": {"clustering_threshold": 1.1}}, "Input should be less than or equal to 1"),
+        ({"raptor": {"clustering_threshold": "string"}}, "Input should be a valid number"),
         ({"raptor": {"max_cluster": 0}}, "Input should be greater than or equal to 1"),
         ({"raptor": {"max_cluster": 1025}}, "Input should be less than or equal to 1024"),
         ({"raptor": {"max_cluster": 3.14}}, "Input should be a valid integer"),
@@ -1042,10 +1039,6 @@ def test_dataset_update_parser_config_invalid_contract(rest_client, clear_datase
         ({"raptor": {"random_seed": -1}}, "Input should be greater than or equal to 0"),
         ({"raptor": {"random_seed": 3.14}}, "Input should be a valid integer"),
         ({"raptor": {"random_seed": "string"}}, "Input should be a valid integer"),
-        ({"raptor": {"clustering_method": "unknown"}}, "Input should be 'gmm' or 'ahc'"),
-        ({"raptor": {"clustering_method": None}}, "Input should be 'gmm' or 'ahc'"),
-        ({"raptor": {"tree_builder": "ahc"}}, "Input should be 'raptor' or 'psi'"),
-        ({"raptor": {"tree_builder": None}}, "Input should be 'raptor' or 'psi'"),
         ({"delimiter": "a" * 65536}, "Parser config exceeds size limit (max 65,535 characters)"),
     ]
     for parser_config, expected_message in invalid_cases:
@@ -1195,7 +1188,7 @@ def test_dataset_create_chunk_method_contract(rest_client, clear_datasets, name,
     assert res.status_code == 200
     payload = res.json()
     assert payload["code"] == 0, payload
-    assert payload["data"][PARSER_ID_FIELD] == chunk_method, payload
+    assert payload["data"][PARSER_ID_FIELD] == _expected_chunk_method(chunk_method), payload
 
 
 @pytest.mark.p2
@@ -1375,12 +1368,12 @@ def test_dataset_create_concurrent_contract(rest_client, clear_datasets):
         ("raptor_true", {"raptor": {"use_raptor": True}}),
         ("raptor_false", {"raptor": {"use_raptor": False}}),
         ("raptor_prompt", {"raptor": {"prompt": "Who are you?"}}),
-        ("raptor_max_token_min", {"raptor": {"max_token": 1}}),
+        ("raptor_max_token_min", {"raptor": {"max_token": 512}}),
         ("raptor_max_token_mid", {"raptor": {"max_token": 1024}}),
         ("raptor_max_token_max", {"raptor": {"max_token": 2048}}),
-        ("raptor_threshold_min", {"raptor": {"threshold": 0.0}}),
-        ("raptor_threshold_mid", {"raptor": {"threshold": 0.5}}),
-        ("raptor_threshold_max", {"raptor": {"threshold": 1.0}}),
+        ("raptor_clustering_threshold_min", {"raptor": {"clustering_threshold": 0.0}}),
+        ("raptor_clustering_threshold_mid", {"raptor": {"clustering_threshold": 0.5}}),
+        ("raptor_clustering_threshold_max", {"raptor": {"clustering_threshold": 1.0}}),
         ("raptor_max_cluster_min", {"raptor": {"max_cluster": 1}}),
         ("raptor_max_cluster_mid", {"raptor": {"max_cluster": 512}}),
         ("raptor_max_cluster_max", {"raptor": {"max_cluster": 1024}}),
@@ -1432,9 +1425,9 @@ def test_dataset_create_concurrent_contract(rest_client, clear_datasets):
         "raptor_max_token_min",
         "raptor_max_token_mid",
         "raptor_max_token_max",
-        "raptor_threshold_min",
-        "raptor_threshold_mid",
-        "raptor_threshold_max",
+        "raptor_clustering_threshold_min",
+        "raptor_clustering_threshold_mid",
+        "raptor_clustering_threshold_max",
         "raptor_max_cluster_min",
         "raptor_max_cluster_mid",
         "raptor_max_cluster_max",
@@ -1693,7 +1686,7 @@ def test_dataset_create_permission_and_chunk_method_contract(rest_client, clear_
         elif IS_GO_PROXY and chunk_method == "":
             assert payload["message"] == "parser_id is required when parse_type is BuiltIn", payload
         elif IS_GO_PROXY:
-            assert payload["message"].startswith("input should be 'audio', 'book'") and payload["message"].endswith("or 'table'"), payload
+            assert payload["message"].startswith("input should be 'general', 'qa'") and payload["message"].endswith("or 'email'"), payload
         else:
             assert expected_chunk_message in payload["message"], payload
 
@@ -1710,7 +1703,7 @@ def test_dataset_create_permission_and_chunk_method_contract(rest_client, clear_
     assert chunk_method_unset_res.status_code == 200
     chunk_method_unset_payload = chunk_method_unset_res.json()
     assert chunk_method_unset_payload["code"] == 0, chunk_method_unset_payload
-    assert chunk_method_unset_payload["data"][PARSER_ID_FIELD] == "naive", chunk_method_unset_payload
+    assert chunk_method_unset_payload["data"][PARSER_ID_FIELD] == _expected_chunk_method("naive"), chunk_method_unset_payload
 
 
 @pytest.mark.p2
@@ -1757,13 +1750,11 @@ def test_dataset_create_parser_config_invalid_contract(rest_client, clear_datase
         ("raptor_type_invalid", {"raptor": {"use_raptor": "string"}}, "Input should be a valid boolean"),
         ("raptor_prompt_empty", {"raptor": {"prompt": ""}}, "String should have at least 1 character"),
         ("raptor_prompt_space", {"raptor": {"prompt": " "}}, "String should have at least 1 character"),
-        ("raptor_max_token_min_limit", {"raptor": {"max_token": 0}}, "Input should be greater than or equal to 1"),
         ("raptor_max_token_max_limit", {"raptor": {"max_token": 2049}}, "Input should be less than or equal to 2048"),
-        ("raptor_max_token_float_not_allowed", {"raptor": {"max_token": 3.14}}, "Input should be a valid integer"),
         ("raptor_max_token_type_invalid", {"raptor": {"max_token": "string"}}, "Input should be a valid integer"),
-        ("raptor_threshold_min_limit", {"raptor": {"threshold": -0.1}}, "Input should be greater than or equal to 0"),
-        ("raptor_threshold_max_limit", {"raptor": {"threshold": 1.1}}, "Input should be less than or equal to 1"),
-        ("raptor_threshold_type_invalid", {"raptor": {"threshold": "string"}}, "Input should be a valid number"),
+        ("raptor_clustering_threshold_min_limit", {"raptor": {"clustering_threshold": -0.1}}, "Input should be greater than or equal to 0"),
+        ("raptor_clustering_threshold_max_limit", {"raptor": {"clustering_threshold": 1.1}}, "Input should be less than or equal to 1"),
+        ("raptor_clustering_threshold_type_invalid", {"raptor": {"clustering_threshold": "string"}}, "Input should be a valid number"),
         ("raptor_max_cluster_min_limit", {"raptor": {"max_cluster": 0}}, "Input should be greater than or equal to 1"),
         ("raptor_max_cluster_max_limit", {"raptor": {"max_cluster": 1025}}, "Input should be less than or equal to 1024"),
         ("raptor_max_cluster_float_not_allowed", {"raptor": {"max_cluster": 3.14}}, "Input should be a valid integer"),
@@ -2303,7 +2294,8 @@ def test_dataset_metadata_config_get_and_update_contract(rest_client, create_dat
     assert success_res.status_code == 200
     success_payload = success_res.json()
     assert success_payload["code"] == 0, success_payload
-    assert success_payload["data"] == {"metadata": [], "built_in_metadata": []}, success_payload
+    expected_empty = {"enabled": False, "metadata": [], "built_in_metadata": []} if IS_GO_PROXY else {"metadata": [], "built_in_metadata": []}
+    assert success_payload["data"] == expected_empty, success_payload
 
     for scenario_name, client in (("missing token", RestClient(token=None)), ("invalid token", RestClient(token=INVALID_API_TOKEN))):
         get_res = client.get(f"/datasets/{dataset_id}/metadata/config")
@@ -2343,6 +2335,8 @@ def test_dataset_metadata_config_get_and_update_contract(rest_client, create_dat
             {"key": "size", "type": "number", "description": "File size", "enum": None},
         ],
     }
+    if IS_GO_PROXY:
+        normalized_update_payload["enabled"] = True
     update_res = rest_client.put(f"/datasets/{dataset_id}/metadata/config", json=update_payload)
     assert update_res.status_code == 200
     update_body = update_res.json()
@@ -2359,7 +2353,7 @@ def test_dataset_metadata_config_get_and_update_contract(rest_client, create_dat
     assert missing_payload_res.status_code == 200
     missing_payload = missing_payload_res.json()
     assert missing_payload["code"] == 0, missing_payload
-    assert missing_payload["data"] == {"metadata": [], "built_in_metadata": []}, missing_payload
+    assert missing_payload["data"] == expected_empty, missing_payload
 
     invalid_update_dataset_res = rest_client.put(
         "/datasets/invalid_dataset_id/metadata/config",

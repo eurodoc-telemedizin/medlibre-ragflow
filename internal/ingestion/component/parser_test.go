@@ -28,6 +28,19 @@ import (
 	"ragflow/internal/ingestion/component/schema"
 )
 
+func TestReportParserWarningsAsProgressMessages(t *testing.T) {
+	var got []string
+	ctx := runtime.WithProgressMessageCallback(t.Context(), func(component, message string) {
+		got = append(got, component+": "+message)
+	})
+
+	reportParserWarnings(ctx, []string{"sheet \"Summary\": unsupported image extension \"emf\""})
+
+	if len(got) != 1 || got[0] != "Parser: WARNING: sheet \"Summary\": unsupported image extension \"emf\"" {
+		t.Fatalf("progress warnings = %v", got)
+	}
+}
+
 // TestParserComponent_Registered asserts the factory lookup
 // succeeds for the canonical "Parser" name. This is the contract
 // the pipeline runner relies on (see plan §4 Phase 0, "category-
@@ -244,7 +257,8 @@ func TestParserComponent_Invoke_ResolvesBinaryFromDocID(t *testing.T) {
 	ms := withMemoryStorage(t)
 	db := withFileComponentTestDB(t)
 	location := "docs/from-parser.txt"
-	if err := ms.Put("kb-parser", location, []byte("alpha\fbeta")); err != nil {
+	ctx := t.Context()
+	if err := ms.Put(ctx, "kb-parser", location, []byte("alpha\fbeta")); err != nil {
 		t.Fatalf("seed storage: %v", err)
 	}
 	docName := "parser.txt"
@@ -263,7 +277,7 @@ func TestParserComponent_Invoke_ResolvesBinaryFromDocID(t *testing.T) {
 	}
 
 	c := &ParserComponent{Param: schema.ParserParam{}.Defaults()}
-	out, err := c.Invoke(context.Background(), db, map[string]any{"doc_id": "doc-parser"})
+	out, err := c.Invoke(ctx, db, map[string]any{"doc_id": "doc-parser"})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
 	}
@@ -281,12 +295,13 @@ func TestParserComponent_Invoke_ResolvesBinaryFromDocID(t *testing.T) {
 
 func TestParserComponent_Invoke_ResolvesBinaryFromBucketPath(t *testing.T) {
 	ms := withMemoryStorage(t)
-	if err := ms.Put("bucket-1", "docs/explicit.txt", []byte("bucket content")); err != nil {
+	ctx := t.Context()
+	if err := ms.Put(ctx, "bucket-1", "docs/explicit.txt", []byte("bucket content")); err != nil {
 		t.Fatalf("seed storage: %v", err)
 	}
 
 	c := &ParserComponent{Param: schema.ParserParam{}.Defaults()}
-	out, err := c.Invoke(context.Background(), nil, map[string]any{
+	out, err := c.Invoke(ctx, nil, map[string]any{
 		"bucket": "bucket-1",
 		"path":   "docs/explicit.txt",
 	})
